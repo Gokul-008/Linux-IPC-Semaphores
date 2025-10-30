@@ -116,12 +116,14 @@ if(NUM_LOOPS>=10)    {
 ## OUTPUT
 $ ./sem.o 
 
-![image](https://github.com/AshwinKumar-Saveetha/Linux-IPC-Semaphores/assets/155129814/acd3c4cb-b3c2-45b1-b947-7d397f4035b7)
+<img width="1185" height="721" alt="Screenshot from 2025-10-27 09-36-50" src="https://github.com/user-attachments/assets/03d4986d-7bcb-45b4-a472-4f265860b266" />
+
 
 
 $ ipcs
 
-![image](https://github.com/AshwinKumar-Saveetha/Linux-IPC-Semaphores/assets/155129814/9f97736f-b86b-49cd-ad98-d4f7a3506575)
+<img width="1185" height="319" alt="Screenshot from 2025-10-27 09-38-01" src="https://github.com/user-attachments/assets/de8c4c2f-1bee-44ed-8c3c-d45a643a1981" />
+
 
 
 
