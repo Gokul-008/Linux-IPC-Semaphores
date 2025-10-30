@@ -27,89 +27,221 @@ Reg No : 212222230037
 ## Write a C program that implements a producer-consumer system with two processes using Semaphores.
 
 ```
-/*
- * sem.c  - demonstrates a basic producer-consumer
- *                            implementation.              */
-#include <stdio.h>	 /* standard I/O routines.              */
-#include <stdlib.h>      /* rand() and srand() functions        */
-#include <unistd.h>	 /* fork(), etc.                        */
-#include <time.h>	 /* nanosleep(), etc.                   */
-#include <sys/types.h>   /* various type definitions.           */
-#include <sys/ipc.h>     /* general SysV IPC structures         */
-#include <sys/sem.h>	 /* semaphore functions and structs.    */
-#define NUM_LOOPS	20	 /* number of loops to perform. */
-#if defined(__GNU_LIBRARY__) && !defined(_SEM_SEMUN_UNDEFINED)
-/* union semun is defined by including <sys/sem.h> */
-#else
-/* according to X/OPEN we have to define it ourselves */
+/**
+ * producer_consumer.c
+ *
+ * This program implements the classic Producer-Consumer problem using
+ * two separate processes (parent = producer, child = consumer).
+ *
+ * It uses:
+ * - POSIX Shared Memory (shm_open, mmap, ftruncate) for the shared buffer.
+ * - POSIX Named Semaphores (sem_open, sem_wait, sem_post) for synchronization.
+ *
+ * How to compile:
+ * gcc producer_consumer.c -o producer_consumer -lpthread -lrt
+ *
+ * (You need -lpthread for semaphores and -lrt for shared memory)
+ *
+ * How to run:
+ * ./producer_consumer
+ */
 
-union semun {
-        int val;                    /* value for SETVAL */
-        struct semid_ds *buf;       /* buffer for IPC_STAT, IPC_SET */
-        unsigned short int *array;  /* array for GETALL, SETALL */
-        struct seminfo *__buf;      /* buffer for IPC_INFO */
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>     // For fork(), sleep(), ftruncate()
+#include <semaphore.h>  // For POSIX semaphores (sem_t)
+#include <fcntl.h>      // For O_CREAT, O_RDWR
+#include <sys/mman.h>   // For mmap(), shm_open()
+#include <sys/stat.h>   // For mode constants (S_IRUSR)
+#include <sys/wait.h>   // For wait()
+
+// --- Constants ---
+#define BUFFER_SIZE 10  // Size of the shared buffer
+#define NUM_ITEMS 30    // Number of items to produce/consume
+
+// Names for shared memory and semaphores
+const char* SHM_NAME = "/pc_shared_memory";
+const char* SEM_MUTEX = "/pc_sem_mutex"; // For mutual exclusion
+const char* SEM_EMPTY = "/pc_sem_empty"; // Counts empty slots
+const char* SEM_FULL = "/pc_sem_full";   // Counts full slots
+
+// --- Shared Data Structure ---
+// This structure will be placed in shared memory.
+struct shared_data {
+    int buffer[BUFFER_SIZE];
+    int in;  // Index for producer to write
+    int out; // Index for consumer to read
 };
-#endif
-int main(int argc, char* argv[])
-{
-    int sem_set_id;	      /* ID of the semaphore set.       */
-    union semun sem_val;      /* semaphore value, for semctl(). */
-    int child_pid;	      /* PID of our child process.      */
-    int i;		      /* counter for loop operation.    */
-    struct sembuf sem_op;     /* structure for semaphore ops.   */
-    int rc;		      /* return value of system calls.  */
-    struct timespec delay;    /* used for wasting time.         */
-/* create a private semaphore set with one semaphore in it, */
-    /* with access only to the owner.                           */
-    sem_set_id = semget(IPC_PRIVATE, 1, 0600);
-    if (sem_set_id == -1) {
-	perror("main: semget");
-	exit(1);
+
+// --- Function Prototypes ---
+void producer(sem_t* mutex, sem_t* empty, sem_t* full, struct shared_data* data);
+void consumer(sem_t* mutex, sem_t* empty, sem_t* full, struct shared_data* data);
+void cleanup_resources();
+
+int main() {
+    int shm_fd;
+    struct shared_data* shared_mem_ptr;
+    pid_t pid;
+
+    // --- Clean up old resources (in case of a crash) ---
+    // This is good practice.
+    cleanup_resources();
+
+    // --- 1. Create Shared Memory ---
+    // shm_open creates or opens a POSIX shared memory object.
+    shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
+    if (shm_fd == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
     }
-    printf("semaphore set created, semaphore set id '%d'.\n", sem_set_id);
-    /* intialize the first (and single) semaphore in our set to '0'. */
-    sem_val.val = 0;
-    rc = semctl(sem_set_id, 0, SETVAL, sem_val);
-    /* fork-off a child process, and start a producer/consumer job. */
-    child_pid = fork();
-    switch (child_pid) {
-	case -1:	/* fork() failed */
-	    perror("fork");
-	    exit(1);
-case 0:		/* child process here */
-	    for (i=0; i<NUM_LOOPS; i++) {
-		/* block on the semaphore, unless it's value is non-negative. */
-		sem_op.sem_num = 0;
-		sem_op.sem_op = -1;
-		sem_op.sem_flg = 0;
-		semop(sem_set_id, &sem_op, 1);
-		printf("consumer: '%d'\n", i);
-		fflush(stdout);
-	    }
-	    break;
-	default:	/* parent process here */
-	    for (i=0; i<NUM_LOOPS; i++) {
-		printf("producer: '%d'\n", i);
-		fflush(stdout);
-		/* increase the value of the semaphore by 1. */
-		sem_op.sem_num = 0;
-sem_op.sem_op = 1;
-		sem_op.sem_flg = 0;
-		semop(sem_set_id, &sem_op, 1);
-		/* pause execution for a little bit, to allow the */
-		/* child process to run and handle some requests. */
-		/* this is done about 25% of the time.            */
-		if (rand() > 3*(RAND_MAX/4)) {
-	    	    delay.tv_sec = 0;
-	    	    delay.tv_nsec = 10;
-	    	    //nanosleep(&delay, NULL);
-		                      sleep(10); }
-if(NUM_LOOPS>=10)    {
-	    semctl(sem_set_id, 0, IPC_RMID, sem_val) ;} // Remove the sem_set_id
-	    }}
-	    break;
+
+    // Set the size of the shared memory object
+    ftruncate(shm_fd, sizeof(struct shared_data));
+
+    // Map the shared memory object into the process's address space
+    shared_mem_ptr = (struct shared_data*) mmap(
+        0, 
+        sizeof(struct shared_data),
+        PROT_READ | PROT_WRITE, 
+        MAP_SHARED, 
+        shm_fd, 
+        0
+    );
+
+    if (shared_mem_ptr == MAP_FAILED) {
+        perror("mmap");
+        exit(EXIT_FAILURE);
     }
-    return 0;}
+
+    // Initialize shared memory indices
+    shared_mem_ptr->in = 0;
+    shared_mem_ptr->out = 0;
+
+    // --- 2. Create Semaphores ---
+    // sem_open creates or opens a named POSIX semaphore.
+    // O_CREAT: Create if it doesn't exist
+    // 0666: Permissions
+    // Initial values: mutex=1, empty=BUFFER_SIZE, full=0
+
+    sem_t* mutex = sem_open(SEM_MUTEX, O_CREAT, 0666, 1);
+    sem_t* empty = sem_open(SEM_EMPTY, O_CREAT, 0666, BUFFER_SIZE);
+    sem_t* full = sem_open(SEM_FULL, O_CREAT, 0666, 0);
+
+    if (mutex == SEM_FAILED || empty == SEM_FAILED || full == SEM_FAILED) {
+        perror("sem_open");
+        exit(EXIT_FAILURE);
+    }
+
+    // --- 3. Fork ---
+    pid = fork();
+
+    if (pid < 0) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) {
+        // --- Child Process (Consumer) ---
+        printf("Consumer process created.\n");
+        consumer(mutex, empty, full, shared_mem_ptr);
+        exit(EXIT_SUCCESS);
+    } else {
+        // --- Parent Process (Producer) ---
+        printf("Producer process created.\n");
+        producer(mutex, empty, full, shared_mem_ptr);
+
+        // Wait for the child (consumer) process to finish
+        wait(NULL);
+        printf("Consumer finished. Parent cleaning up.\n");
+
+        // --- 4. Cleanup (in Parent) ---
+        // Close semaphores
+        sem_close(mutex);
+        sem_close(empty);
+        sem_close(full);
+
+        // Unmap shared memory
+        munmap(shared_mem_ptr, sizeof(struct shared_data));
+        close(shm_fd);
+
+        // Unlink semaphores and shared memory (removes them from the system)
+        cleanup_resources();
+    }
+
+    return 0;
+}
+
+/**
+ * Producer Function
+ */
+void producer(sem_t* mutex, sem_t* empty, sem_t* full, struct shared_data* data) {
+    for (int i = 0; i < NUM_ITEMS; i++) {
+        // Produce an item (just a number)
+        int item = i * 10; 
+        
+        // Wait for an empty slot
+        sem_wait(empty);
+        
+        // Lock the buffer
+        sem_wait(mutex);
+        
+        // --- Critical Section ---
+        data->buffer[data->in] = item;
+        printf("Produced: %d \t(at index %d)\n", item, data->in);
+        data->in = (data->in + 1) % BUFFER_SIZE;
+        // --- End Critical Section ---
+
+        // Unlock the buffer
+        sem_post(mutex);
+
+        // Signal that a slot is now full
+        sem_post(full);
+
+        // Sleep to make the output observable
+        sleep(1); 
+    }
+}
+
+/**
+ * Consumer Function
+ */
+void consumer(sem_t* mutex, sem_t* empty, sem_t* full, struct shared_data* data) {
+    for (int i = 0; i < NUM_ITEMS; i++) {
+        // Wait for a full slot
+        sem_wait(full);
+
+        // Lock the buffer
+        sem_wait(mutex);
+
+        // --- Critical Section ---
+        int item = data->buffer[data->out];
+        printf("\tConsumed: %d \t(from index %d)\n", item, data->out);
+        data->out = (data->out + 1) % BUFFER_SIZE;
+        // --- End Critical Section ---
+        
+        // Unlock the buffer
+        sem_post(mutex);
+
+        // Signal that a slot is now empty
+        sem_post(empty);
+
+        // Sleep a bit longer than producer to show buffer filling up
+        sleep(2); 
+    }
+}
+
+/**
+ * cleanup_resources
+ * Unlinks semaphores and shared memory from the system.
+ * This is important to call, especially if the program crashed,
+ * to prevent resource leaks.
+ */
+void cleanup_resources() {
+    sem_unlink(SEM_MUTEX);
+    sem_unlink(SEM_EMPTY);
+    sem_unlink(SEM_FULL);
+    shm_unlink(SHM_NAME);
+}
 ```
 
 
